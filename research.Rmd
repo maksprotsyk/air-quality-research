@@ -1,0 +1,174 @@
+---
+title: "Mini-research project"
+author: "Maksym Protsyk, Diana Kmet"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Chosen Data
+<font size="3">For our research, we have taken a data set called ["Air Quality Data in India (2015 - 2020)"](https://www.kaggle.com/rohanrao/air-quality-data-in-india) and focused on the **station_day.csv**, which contained information about air quality and amount of different participles in it measured by stations across the India (measurements were taken every day). </font> 
+
+## Goals 
+<font size="3">
+We set ourselves three goals:
+
+1. Examine the distribution of AQI (Air quality index)
+
+2. Check how pandemic affected the AQI
+
+3. Find some relations between the amounts of gases contained in the air (building linear regression)
+
+</font> 
+
+## Importing Libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+library(diptest)
+library(reshape2)
+source("http://www.sthda.com/upload/rquery_cormat.r")
+library(e1071)
+```
+
+
+## Reading data
+```{r}
+data <- read.csv("station_day.csv")
+data$Date <- as.Date(data$Date)
+head(data)
+```
+```{r}
+# we added columns for year and month of measurements, which we will use later
+data$Year = as.numeric(format(data$Date, "%Y"))
+data$Month = as.numeric(format(data$Date, "%m"))
+
+```
+## AQI distribution
+<font size="3">First of all, we will examine the distribution of AQI before the pandemic </font> 
+```{r}
+air.quality.old <- na.omit(data[data$Year != 2020,][c("StationId", "Year", "AQI")])
+ggplot(air.quality.old, aes(x=AQI)) +
+  geom_density(fill="lightblue") +
+  geom_histogram(alpha=0.3, aes(y=..density..), colour="black", fill="white", bins = 45) +
+  ggtitle("Densities of AQI measured during 2015-2019")
+
+
+```
+<font size="3">
+This distribution, however, doesn't seem to follow any well-known distribution (it has 2 peaks, where a lot of values are concentrated). Actually, the distributions that has more than one peak are called multimodal and from the drawn plot we can assume that this distribution is also multimodal. We can use the Hartigans' Dip Test for Unimodality and check this (H0 - the distribution is unimodal, H1 - the distribution is multimodal) However, the proof that the this test works that we found in some book was too complex to write it here and we decided not to include this test (nevertheless, we tried perform this test and the p-value was very small, so we can reject the H0 )
+</font> 
+```{r}
+dip.test(air.quality$AQI)
+```
+
+## Other characteristics
+```{r}
+aqi <- air.quality.old$AQI
+skewness(aqi)
+kurtosis(aqi)
+mean(aqi)
+```
+<font size="3">
+We see that our data is right-skewed and leptokurtic. The mean tells us that air in the India on average has almost poor quality (AQI > 200 means poor air quality)
+</font> 
+
+## Comparing 2020 to previous years
+<font size="3">
+We build the plots only for first halves of years, because data contains information only about the first half of 2020
+</font> 
+```{r}
+air.quality <- data[data$Month <= 6,][c("StationId", "Year", "AQI")]
+air.quality <- na.omit(air.quality)
+
+ggplot(air.quality, aes(x=AQI, color=factor(Year))) +
+  geom_density() +
+  ggtitle("Densities of AQI measured during the first halves of 2015-2020") +
+  labs(color="Years")
+
+```
+<font size="3">
+As we can see from the plots, in 2020 the amount of low AQI measurements (better air quality) is much greater than in the previous years. Now let's compare some other characteristics:
+</font> 
+
+```{r}
+air.quality %>%
+  group_by(Year) %>%
+  summarise(Mean=mean(AQI), Median=median(AQI), Sd=sd(AQI))
+```
+<font size="3">
+Mean, median and standard deviation are all smaller in 2020 (smaller values and their spread), and it is reasonable to assume, that expected AIQ is less in 2020, than in other years. Let's now test this hypothesis for 2019 year. (H0 - expected value in 2020 = expected value in 2019, H1 - expected value in 2020 < expected value in 2019)
+We will use t-test, because we are comparing expected values and variance is unknown
+</font> 
+```{r}
+t.test(air.quality[air.quality$Year == 2020,]$AQI,
+       air.quality[air.quality$Year == 2019,]$AQI,
+       alternative = "l")
+```
+<font size="3">
+The p-value is very small, which allows us to reject H0. So our test confirmed, that quarantine had positive effect on the air quality in India.
+
+We also decided to check the values of AIQ during the lockdown, which took place from 25th of March to 14th of April
+</font> 
+```{r}
+air.quality.lockdown <- na.omit(data[data$Date >= as.Date("2020-03-25") & data$Date <= as.Date("2020-04-14"),][c("StationId", "Year", "AQI")])
+ggplot(air.quality.lockdown, aes(x=AQI)) +
+  geom_density(fill="lightblue") +
+  ggtitle("Density of AQI during lockdown in India")
+```
+<font size="3">
+Here we see even better results. There is no second peak and it is logical, because all crowded regions which caused air quality to reduce before, were not crowded anymore.
+</font>
+## Relation between AQI and gases contained in the air
+<font size="3">
+First, we need to drop some unneccessary columns (Date, Year, Month, AQI_Bucket and StationId) and na values
+</font>
+```{r}
+data.clear <- na.omit(data[c(-1, -2, -16, -18)])
+head(data.clear)
+```
+
+<font size="3">
+Now let's build the corellation matrix and see what parameters are related to each other
+</font>
+```{r}
+rquery.cormat(data.clear[-14])
+```
+<font size="3">
+As we can see the strongest correlation is between PM2.5 and AQI, but if we build a model that calculates AQI depending on the parameters (the mass in micrograms of respective participles in the $m^3$ of air) given in the table, it will be useless, because, as we discovered, the formula of AQI actually contains all these parameters 
+
+However, we can try to predict the amount of one participle in the air, given another one.
+For example, we can see strong correlation between PM10 and PM2.5, which are representing the mass of participles, which are have diameter less than 10 and 2.5 respectively. Predicting PM10 based on PM2.5 can help scientists to calculate different coefficients without actually performing any measures of PM10.
+
+We decided to build a simple linear regression model (our experiments showed, that other parameters lead to a very small increase of determinant coefficient) 
+</font>
+
+## Building the model
+<font size="3">
+We want to test the Hypothesis that PM10 is linearly dependent of PM2.5
+(H0 - the parameters are independent)
+For this purpose we are building the simple linear regression model.
+</font>
+```{r}
+predictor <- lm(PM10~PM2.5, data=data.clear )
+summary(predictor)
+```
+<font size="3">
+As we can see, the p-value for F-test is very small and also the determinant coefficient is equal to  0.79, which is good enough to reject the H0.
+
+Let's now build our predicted values and the real ones, and see how good our model fits the data
+</font>
+```{r}
+data.clear$Predicted = predict(predictor, newdata = data.clear)
+ggplot(data.clear, aes(x=PM2.5, y=PM10)) +
+  geom_point() +
+  geom_smooth(method="lm") +
+  facet_wrap(~factor(Year)) +
+  ggtitle("Comparing predicted PM10 values and real ones")
+```
